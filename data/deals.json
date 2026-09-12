@@ -1,0 +1,4 @@
+[
+  { "dealname": "Test Deal - Acme Corp", "amount": 5000 },
+  { "dealname": "Test Deal - Globex Inc", "amount": 12000 }
+]
