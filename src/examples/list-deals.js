@@ -1,6 +1,6 @@
 'use strict';
 
-const { getHubSpotDeals } = require('../repositories/dealRepository');
+const { getHubSpotDeals } = require('../services/hubSpotService');
 
 async function run() {
   try {

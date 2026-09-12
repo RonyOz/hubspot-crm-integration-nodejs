@@ -125,6 +125,22 @@ async function syncDealsWithHubSpot(deals) {
 }
 
 module.exports = {
+  // Thin delegations: no extra logic here, but every example/controller talks
+  // to the service, never the repository directly — keeps a single, uniform
+  // entry point so cross-cutting concerns (audit, cache, etc.) have one place
+  // to land later, and no caller has to guess which layer to call.
+  getHubSpotContacts: contactRepository.getHubSpotContacts,
+  getHubSpotContactNames: contactRepository.getHubSpotContactNames,
+  createHubSpotContact: contactRepository.createHubSpotContact,
+  updateHubSpotContact: contactRepository.updateHubSpotContact,
+  deleteHubSpotContact: contactRepository.deleteHubSpotContact,
+
+  getHubSpotDeals: dealRepository.getHubSpotDeals,
+  createHubSpotDeal: dealRepository.createHubSpotDeal,
+  updateHubSpotDeal: dealRepository.updateHubSpotDeal,
+  deleteHubSpotDeal: dealRepository.deleteHubSpotDeal,
+
+  // Orchestration (real logic lives here)
   syncContactsWithHubSpot,
   syncDealsWithHubSpot,
   associateContactToDeal,

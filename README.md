@@ -55,9 +55,10 @@ src/
   repositories/   contactRepository.js, dealRepository.js, associationRepository.js —
                   raw HubSpot endpoint calls, map HubSpot's {id, properties:{...}} shape
                   to flat objects for the service layer
-  services/       hubSpotService.js — orchestrates repositories for cross-cutting logic
-                  (idempotent sync, associations); simple single-resource CRUD is NOT
-                  re-exported here, examples call repositories directly for that
+  services/       hubSpotService.js — single entry point every example goes through.
+                  Simple single-resource CRUD is a thin delegation to the matching
+                  repository (no extra logic); cross-cutting orchestration (idempotent
+                  sync, associations) holds real logic here instead
   utils/          validateHubSpotPayload.js, handleHubSpotErrors.js, streams.js —
                   cross-cutting concerns used by client/repositories/services alike
   fundamentals/   Section 1 exercises (callbacks, promises/async-await, CommonJS modules)
@@ -119,7 +120,7 @@ Covers only the pure, no-network layer: `validateHubSpotPayload`, `handleHubSpot
 
 ## Technical Decisions
 
-- **Layered architecture** (examples → services → repositories → client): groups code by technical responsibility, matches the exact function/file names the spec requires, keeps each layer independently testable/replaceable.
+- **Layered architecture** (examples → services → repositories → client), **uniformly enforced**: every example goes through `hubSpotService`, never straight to a repository — even for plain CRUD with no extra logic, where the service method is a one-line delegation. This was a deliberate correction: an earlier version let examples call repositories directly "since there's nothing to add," which technically works but breaks the layer's contract and makes the codebase inconsistent (some paths go through service, some don't, with no rule to predict which). Uniform routing means any future cross-cutting concern (audit logging, caching, per-call permission checks) has exactly one place to land, and every caller follows the same rule.
 - **axios over `@hubspot/api-client`**: the SDK bakes in its own error handling/retries, which would hide the hand-written retry/backoff/error-normalization logic that this test evaluates. axios + a custom interceptor keeps that logic visible and inspectable.
 - **CommonJS over TypeScript**: the spec explicitly requires `require`/`module.exports` and evaluates CommonJS understanding directly (Section 1.3); adding a TypeScript build step would work against that and add setup friction with no evaluated benefit.
 - **`pipeline`/`dealstage` instead of the spec's `hs_pipeline`/`hs_stage`**: those two property names don't exist on HubSpot deals. The real, current property names — confirmed against official HubSpot docs — are `pipeline` and `dealstage`. Used the real names everywhere so the calls actually work against the live API, since "appropriate real HubSpot API calls" is an explicit evaluation criterion.

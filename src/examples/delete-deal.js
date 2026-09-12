@@ -1,6 +1,6 @@
 'use strict';
 
-const { deleteHubSpotDeal } = require('../repositories/dealRepository');
+const { deleteHubSpotDeal } = require('../services/hubSpotService');
 
 async function run() {
   const [dealId] = process.argv.slice(2);

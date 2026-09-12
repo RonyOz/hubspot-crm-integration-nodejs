@@ -1,6 +1,6 @@
 'use strict';
 
-const { updateHubSpotDeal } = require('../repositories/dealRepository');
+const { updateHubSpotDeal } = require('../services/hubSpotService');
 
 async function run() {
   const [dealId, dealname, amount] = process.argv.slice(2);

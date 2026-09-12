@@ -1,6 +1,6 @@
 'use strict';
 
-const { deleteHubSpotContact } = require('../repositories/contactRepository');
+const { deleteHubSpotContact } = require('../services/hubSpotService');
 
 async function run() {
   const [contactId] = process.argv.slice(2);

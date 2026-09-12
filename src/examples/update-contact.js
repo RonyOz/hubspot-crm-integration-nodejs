@@ -1,6 +1,6 @@
 'use strict';
 
-const { updateHubSpotContact } = require('../repositories/contactRepository');
+const { updateHubSpotContact } = require('../services/hubSpotService');
 
 async function run() {
   const [contactId, firstname, lastname, email] = process.argv.slice(2);

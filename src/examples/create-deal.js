@@ -1,7 +1,7 @@
 'use strict';
 
 const config = require('../config/env');
-const { createHubSpotDeal } = require('../repositories/dealRepository');
+const { createHubSpotDeal } = require('../services/hubSpotService');
 
 async function run() {
   try {

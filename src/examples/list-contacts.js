@@ -1,6 +1,6 @@
 'use strict';
 
-const { getHubSpotContacts } = require('../repositories/contactRepository');
+const { getHubSpotContacts } = require('../services/hubSpotService');
 
 async function run() {
   try {
