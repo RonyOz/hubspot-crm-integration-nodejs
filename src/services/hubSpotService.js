@@ -1,0 +1,131 @@
+'use strict';
+
+const config = require('../config/env');
+const contactRepository = require('../repositories/contactRepository');
+const dealRepository = require('../repositories/dealRepository');
+const { associateContactToDeal } = require('../repositories/associationRepository');
+const { logHubSpotError, classifyHubSpotError } = require('../utils/handleHubSpotErrors');
+const { ValidationError } = require('../utils/validateHubSpotPayload');
+
+function describeError(error) {
+  if (error instanceof ValidationError) {
+    return { message: error.message, details: error.details };
+  }
+  const classified = classifyHubSpotError(error);
+  return { message: classified.message, status: classified.status, code: classified.code };
+}
+
+function summarize(results) {
+  return {
+    total: results.length,
+    created: results.filter((r) => r.status === 'created').length,
+    updated: results.filter((r) => r.status === 'updated').length,
+    failed: results.filter((r) => r.status === 'failed').length,
+    results,
+  };
+}
+
+async function syncContactsWithHubSpot(contacts) {
+  if (!Array.isArray(contacts)) {
+    throw new TypeError('contacts must be an array');
+  }
+
+  const results = [];
+
+  for (const [index, input] of contacts.entries()) {
+    const identifier = (input && input.email) || `#${index}`;
+
+    if (!input || !input.email) {
+      results.push({
+        identifier,
+        input,
+        status: 'failed',
+        id: null,
+        error: { message: 'email is required to sync a contact idempotently' },
+      });
+      continue;
+    }
+
+    const properties = {
+      email: input.email,
+      ...(input.firstname !== undefined ? { firstname: input.firstname } : {}),
+      ...(input.lastname !== undefined ? { lastname: input.lastname } : {}),
+    };
+
+    try {
+      const existing = await contactRepository.findContactByEmail(input.email);
+      const result = existing
+        ? await contactRepository.updateHubSpotContact(existing.id, properties)
+        : await contactRepository.createHubSpotContact(properties);
+
+      results.push({
+        identifier,
+        input,
+        status: existing ? 'updated' : 'created',
+        id: result.id,
+        error: null,
+      });
+    } catch (error) {
+      logHubSpotError(error, { operation: 'syncContactsWithHubSpot', identifier });
+      results.push({ identifier, input, status: 'failed', id: null, error: describeError(error) });
+    }
+  }
+
+  return summarize(results);
+}
+
+async function syncDealsWithHubSpot(deals) {
+  if (!Array.isArray(deals)) {
+    throw new TypeError('deals must be an array');
+  }
+
+  const results = [];
+
+  for (const [index, input] of deals.entries()) {
+    const identifier = (input && input.dealname) || `#${index}`;
+
+    if (!input || !input.dealname) {
+      results.push({
+        identifier,
+        input,
+        status: 'failed',
+        id: null,
+        error: { message: 'dealname is required to sync a deal idempotently' },
+      });
+      continue;
+    }
+
+    const properties = {
+      dealname: input.dealname,
+      amount: input.amount,
+      pipeline: input.pipeline || config.hubspot.pipelineId,
+      dealstage: input.dealstage || config.hubspot.stageId,
+    };
+
+    try {
+      const existing = await dealRepository.findDealByName(input.dealname);
+      const result = existing
+        ? await dealRepository.updateHubSpotDeal(existing.id, properties)
+        : await dealRepository.createHubSpotDeal(properties);
+
+      results.push({
+        identifier,
+        input,
+        status: existing ? 'updated' : 'created',
+        id: result.id,
+        error: null,
+      });
+    } catch (error) {
+      logHubSpotError(error, { operation: 'syncDealsWithHubSpot', identifier });
+      results.push({ identifier, input, status: 'failed', id: null, error: describeError(error) });
+    }
+  }
+
+  return summarize(results);
+}
+
+module.exports = {
+  syncContactsWithHubSpot,
+  syncDealsWithHubSpot,
+  associateContactToDeal,
+};
