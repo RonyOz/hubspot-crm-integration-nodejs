@@ -2,7 +2,6 @@
   "name": "hubspot-crm-integration-nodejs",
   "version": "1.0.0",
   "description": "Node.js technical test: Node fundamentals + HubSpot CRM (Contacts/Deals) integration",
-  "main": "src/index.js",
   "type": "commonjs",
   "engines": {
     "node": ">=20"
@@ -11,7 +10,16 @@
     "test": "node --test",
     "fundamentals:callback": "node src/fundamentals/callback.js",
     "fundamentals:async": "node src/fundamentals/asyncAwait.js",
-    "fundamentals:modules": "node src/fundamentals/main.js"
+    "fundamentals:modules": "node src/fundamentals/main.js",
+    "fundamentals:streams": "node src/utils/streams.js",
+    "examples:list-pipelines": "node src/examples/list-pipelines.js",
+    "examples:list-contact-names": "node src/examples/list-contact-names.js",
+    "examples:list-contacts": "node src/examples/list-contacts.js",
+    "examples:create-contact": "node src/examples/create-contact.js",
+    "examples:list-deals": "node src/examples/list-deals.js",
+    "examples:create-deal": "node src/examples/create-deal.js",
+    "examples:sync-contacts": "node src/examples/sync-contacts.js",
+    "examples:sync-deals": "node src/examples/sync-deals.js"
   },
   "license": "ISC",
   "dependencies": {
