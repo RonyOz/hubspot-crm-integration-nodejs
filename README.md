@@ -1,5 +1,7 @@
 # HubSpot CRM Integration - Node.js
 
+![Component Diagram](docs/diagrams/ComponentDiagram.png)
+
 Node.js fundamentals (Section 1) + a real HubSpot CRM integration for Contacts and Deals (Section 2). Every HubSpot call in this repo hits a live portal.
 
 ## Setup
