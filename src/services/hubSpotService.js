@@ -100,7 +100,7 @@ async function syncDealsWithHubSpot(deals) {
       pipeline: input.pipeline || config.hubspot.pipelineId,
       dealstage: input.dealstage || config.hubspot.stageId,
       // source_id models the natural key a real external system would provide
-      // (a record ID from whatever CRM/ERP this sync is migrating from) — it's
+      // (a record ID from whatever CRM/ERP this sync is migrating from); it's
       // stable even if dealname changes later. Stored in HubSpot's
       // sync_external_id (custom property, marked "unique value"), which is
       // what makes the atomic batch/upsert possible for deals, same mechanism
@@ -129,7 +129,7 @@ async function syncDealsWithHubSpot(deals) {
 
 module.exports = {
   // Thin delegations: no extra logic here, but every example/controller talks
-  // to the service, never the repository directly — keeps a single, uniform
+  // to the service, never the repository directly; keeps a single, uniform
   // entry point so cross-cutting concerns (audit, cache, etc.) have one place
   // to land later, and no caller has to guess which layer to call.
   getHubSpotContacts: contactRepository.getHubSpotContacts,

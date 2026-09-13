@@ -46,7 +46,7 @@ async function deleteHubSpotDeal(dealId) {
 }
 
 // Native atomic upsert-by-property, same mechanism as contactRepository.upsertContactByEmail.
-// Deals have no unique property by default (dealname is NOT unique — batch/upsert
+// Deals have no unique property by default (dealname is NOT unique; batch/upsert
 // rejects it live with a 400), so this relies on a custom property created for this
 // purpose: `sync_external_id`, marked "unique value" in the portal (Settings >
 // Properties > Deals > sync_external_id > hasUniqueValue: true, verified via
