@@ -1,4 +1,12 @@
 [
-  { "dealname": "Test Deal - Acme Corp", "amount": 5000 },
-  { "dealname": "Test Deal - Globex Inc", "amount": 12000 }
+  {
+    "source_id": "ext-acme-001",
+    "dealname": "Test Deal - Acme Corp",
+    "amount": 5000
+  },
+  {
+    "source_id": "ext-globex-002",
+    "dealname": "Test Deal - Globex Inc",
+    "amount": 12000
+  }
 ]

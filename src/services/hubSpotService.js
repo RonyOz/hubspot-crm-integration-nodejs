@@ -81,15 +81,15 @@ async function syncDealsWithHubSpot(deals) {
   const results = [];
 
   for (const [index, input] of deals.entries()) {
-    const identifier = (input && input.dealname) || `#${index}`;
+    const identifier = (input && input.source_id) || `#${index}`;
 
-    if (!input || !input.dealname) {
+    if (!input || !input.source_id) {
       results.push({
         identifier,
         input,
         status: 'failed',
         id: null,
-        error: { message: 'dealname is required to sync a deal idempotently' },
+        error: { message: 'source_id is required to sync a deal idempotently' },
       });
       continue;
     }
@@ -99,24 +99,22 @@ async function syncDealsWithHubSpot(deals) {
       amount: input.amount,
       pipeline: input.pipeline || config.hubspot.pipelineId,
       dealstage: input.dealstage || config.hubspot.stageId,
+      // source_id models the natural key a real external system would provide
+      // (a record ID from whatever CRM/ERP this sync is migrating from) — it's
+      // stable even if dealname changes later. Stored in HubSpot's
+      // sync_external_id (custom property, marked "unique value"), which is
+      // what makes the atomic batch/upsert possible for deals, same mechanism
+      // contacts get for free from `email`.
+      sync_external_id: input.source_id,
     };
 
     try {
-      // Deals have no default unique property (unlike contacts' email), so
-      // HubSpot's batch/upsert endpoint rejects `idProperty: 'dealname'` with
-      // a 400 (confirmed live: "Unable to perform update/upsert by non-unique
-      // 0-3 property dealname"). Falls back to client-side search-then-write,
-      // which carries the Search API's eventual-consistency risk documented
-      // in the README's Known Limitations section.
-      const existing = await dealRepository.findDealByName(input.dealname);
-      const result = existing
-        ? await dealRepository.updateHubSpotDeal(existing.id, properties)
-        : await dealRepository.createHubSpotDeal(properties);
+      const result = await dealRepository.upsertDealByExternalId(properties);
 
       results.push({
         identifier,
         input,
-        status: existing ? 'updated' : 'created',
+        status: result.isNew ? 'created' : 'updated',
         id: result.id,
         error: null,
       });
