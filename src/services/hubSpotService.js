@@ -53,15 +53,14 @@ async function syncContactsWithHubSpot(contacts) {
     };
 
     try {
-      const existing = await contactRepository.findContactByEmail(input.email);
-      const result = existing
-        ? await contactRepository.updateHubSpotContact(existing.id, properties)
-        : await contactRepository.createHubSpotContact(properties);
+      // Native atomic upsert-by-email no client-side search, so no eventual-consistency race like the one
+      // found for deals below.
+      const result = await contactRepository.upsertContactByEmail(properties);
 
       results.push({
         identifier,
         input,
-        status: existing ? 'updated' : 'created',
+        status: result.isNew ? 'created' : 'updated',
         id: result.id,
         error: null,
       });
@@ -103,6 +102,12 @@ async function syncDealsWithHubSpot(deals) {
     };
 
     try {
+      // Deals have no default unique property (unlike contacts' email), so
+      // HubSpot's batch/upsert endpoint rejects `idProperty: 'dealname'` with
+      // a 400 (confirmed live: "Unable to perform update/upsert by non-unique
+      // 0-3 property dealname"). Falls back to client-side search-then-write,
+      // which carries the Search API's eventual-consistency risk documented
+      // in the README's Known Limitations section.
       const existing = await dealRepository.findDealByName(input.dealname);
       const result = existing
         ? await dealRepository.updateHubSpotDeal(existing.id, properties)

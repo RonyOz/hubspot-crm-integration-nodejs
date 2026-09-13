@@ -1,7 +1,7 @@
 'use strict';
 
 const hubSpotClient = require('../clients/hubSpotClient');
-const { validateContactPayload } = require('../utils/validateHubSpotPayload');
+const { validateContactPayload, ValidationError } = require('../utils/validateHubSpotPayload');
 
 const CONTACTS_PATH = '/crm/v3/objects/contacts';
 const DEFAULT_PROPERTIES = ['firstname', 'lastname', 'email'];
@@ -61,18 +61,18 @@ async function deleteHubSpotContact(contactId) {
   return true;
 }
 
-async function findContactByEmail(email) {
-  const { data } = await hubSpotClient.post(`${CONTACTS_PATH}/search`, {
-    filterGroups: [
-      {
-        filters: [{ propertyName: 'email', operator: 'EQ', value: email }],
-      },
-    ],
-    properties: DEFAULT_PROPERTIES,
-    limit: 1,
+async function upsertContactByEmail(properties) {
+  if (!properties || !properties.email) {
+    throw new ValidationError('email is required to upsert a contact by email', ['properties.email is required']);
+  }
+  validateContactPayload(properties);
+
+  const { data } = await hubSpotClient.post(`${CONTACTS_PATH}/batch/upsert`, {
+    inputs: [{ id: properties.email, idProperty: 'email', properties }],
   });
 
-  return data.results.length > 0 ? mapContact(data.results[0]) : null;
+  const result = data.results[0];
+  return { ...mapContact(result), isNew: result.new };
 }
 
 module.exports = {
@@ -81,5 +81,5 @@ module.exports = {
   createHubSpotContact,
   updateHubSpotContact,
   deleteHubSpotContact,
-  findContactByEmail,
+  upsertContactByEmail,
 };
