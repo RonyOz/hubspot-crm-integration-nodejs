@@ -1,7 +1,7 @@
 'use strict';
 
 // Pure branching-logic tests. These never touch hubSpotClient, axios, or the
-// network — they only exercise classifyHubSpotError/computeBackoffDelayMs on
+// network, they only exercise classifyHubSpotError/computeBackoffDelayMs on
 // plain objects, so this does not violate the "no mocking HubSpot calls" rule.
 
 const test = require('node:test');
