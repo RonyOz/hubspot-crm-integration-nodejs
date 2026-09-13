@@ -19,7 +19,7 @@ async function run() {
     console.error('Failed to create contact:', error.message);
     if (error.response && error.response.status === 409) {
       console.error(
-        'A contact with this email may already exist — try update-contact.js, or use sync-contacts.js for idempotent upserts.'
+        'A contact with this email may already exist, try update-contact.js, or use sync-contacts.js for idempotent upserts.'
       );
     }
     process.exitCode = 1;
