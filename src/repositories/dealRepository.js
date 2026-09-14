@@ -2,7 +2,7 @@
 
 const hubSpotClient = require('../clients/hubSpotClient');
 const { chunk } = require('../utils/chunk');
-const { validateDealPayload, ValidationError } = require('../utils/validateHubSpotPayload');
+const { validateDealPayload } = require('../utils/validateHubSpotPayload');
 
 const DEALS_PATH = '/crm/v3/objects/deals';
 const DEFAULT_PROPERTIES = ['dealname', 'amount', 'pipeline', 'dealstage'];
@@ -59,15 +59,10 @@ async function batchUpsertDealsByExternalId(propertiesList) {
   const outcomes = [];
 
   for (const batch of chunk(propertiesList, MAX_BATCH_SIZE)) {
-    const ids = batch.map((properties) => properties?.sync_external_id);
+    const ids = batch.map((properties) => properties.sync_external_id);
 
     try {
-      batch.forEach((properties) => {
-        if (!properties || !properties.sync_external_id) {
-          throw new ValidationError('sync_external_id is required to upsert a deal', ['properties.sync_external_id is required']);
-        }
-        validateDealPayload(properties);
-      });
+      batch.forEach((properties) => validateDealPayload(properties));
 
       const { data } = await hubSpotClient.post(`${DEALS_PATH}/batch/upsert`, {
         inputs: batch.map((properties) => ({

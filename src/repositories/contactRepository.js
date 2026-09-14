@@ -2,7 +2,7 @@
 
 const hubSpotClient = require('../clients/hubSpotClient');
 const { chunk } = require('../utils/chunk');
-const { validateContactPayload, ValidationError } = require('../utils/validateHubSpotPayload');
+const { validateContactPayload } = require('../utils/validateHubSpotPayload');
 
 const CONTACTS_PATH = '/crm/v3/objects/contacts';
 const DEFAULT_PROPERTIES = ['firstname', 'lastname', 'email'];
@@ -68,15 +68,10 @@ async function batchUpsertContactsByEmail(propertiesList) {
   const outcomes = [];
 
   for (const batch of chunk(propertiesList, MAX_BATCH_SIZE)) {
-    const ids = batch.map((properties) => properties?.email);
+    const ids = batch.map((properties) => properties.email);
 
     try {
-      batch.forEach((properties) => {
-        if (!properties || !properties.email) {
-          throw new ValidationError('email is required to upsert a contact by email', ['properties.email is required']);
-        }
-        validateContactPayload(properties);
-      });
+      batch.forEach((properties) => validateContactPayload(properties));
 
       const { data } = await hubSpotClient.post(`${CONTACTS_PATH}/batch/upsert`, {
         inputs: batch.map((properties) => ({ id: properties.email, idProperty: 'email', properties })),
