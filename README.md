@@ -27,15 +27,15 @@ Get your own pipeline/stage IDs with `node src/examples/list-pipelines.js` after
 1. Portal → **Development** → **Keys** → **Service keys** → **Create service key**.
 2. Scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write`.
 3. Portal ID is the number in the record URL (`app.hubspot.com/contacts/{PORTAL_ID}/record/...`), not `hs_object_source_id`, which identifies the integration, not the portal. Cost me one wrong value in an earlier draft; caught it by reading the raw API response instead of trusting the account URL.
-4. `npm run examples:sync-deals` needs a custom deal property, `sync_external_id`, marked **unique value**, or it fails with `PROPERTY_DOESNT_EXIST`. Create it once: Settings → Properties → Deals → Create property → single-line text → advanced options → "unique value". (See Idempotency section below for why.)
+4. `npm run examples:sync-deals` needs a custom deal property, `sync_external_id`, marked **unique value**, or it fails with `PROPERTY_DOESNT_EXIST`. Create it once: Settings → Properties → Deals → Create property → single-line text → advanced options → "unique value". (See "Idempotent sync" under Decisions for why.)
 
 ## Architecture
 
 ![Component Diagram](docs/diagrams/ComponentDiagram.png)
 
-Every `examples/*.js` script goes through `hubSpotService`, no exceptions. Plain CRUD is a one-line delegation there; the service only holds actual logic for sync and associations. One rule, no special cases to memorize when reading the code.
+Every `examples/*.js` script goes through `hubSpotService`, no exceptions. Most CRUD is a one-line delegation there; the service only holds logic a caller shouldn't have to repeat (deal pipeline/stage defaults, sync input checks, per-chunk sync summaries). One rule, no special cases to memorize when reading the code.
 
-Repositories own HubSpot's specific shapes (pagination cursors, `{id, properties:{...}}` nesting, search filter syntax) and hand back flat objects. `hubSpotClient` is the only thing that knows about HTTP, auth header, timeout, retry/backoff.
+Repositories own HubSpot's specific shapes (pagination cursors, `{id, properties:{...}}` nesting, the 100-input batch limit) and hand back flat objects. `hubSpotClient` is the only thing that knows about HTTP, auth header, timeout, retry/backoff.
 
 ```
 src/
@@ -43,7 +43,7 @@ src/
   clients/        hubSpotClient.js, axios instance + retry interceptor
   repositories/   contactRepository.js, dealRepository.js, associationRepository.js
   services/       hubSpotService.js, the only entry point examples call
-  utils/          validateHubSpotPayload.js, handleHubSpotErrors.js, streams.js
+  utils/          validateHubSpotPayload.js, handleHubSpotErrors.js, chunk.js, streams.js
   fundamentals/   Section 1, standalone, zero dependency on the rest of the repo
   examples/       one script per function, real output to console
 data/             seed JSON for the sync examples
@@ -87,7 +87,7 @@ No-arg scripts have an npm shortcut. Anything taking an ID is run directly (skip
 npm test
 ```
 
-Covers `validateHubSpotPayload`, `handleHubSpotErrors`, `sumArray`, `streams`, the pure layer, no network. Nothing else is unit-tested: the spec bans mocking HubSpot, and hitting the real API on every `npm test` run would mutate the portal every time. Repositories/services are verified by running the examples against a live portal instead.
+Covers `validateHubSpotPayload`, `handleHubSpotErrors`, `chunk`, `sumArray`, `streams`, the pure layer, no network. Nothing else is unit-tested: the spec bans mocking HubSpot, and hitting the real API on every `npm test` run would mutate the portal every time. Repositories/services are verified by running the examples against a live portal instead.
 
 ## Endpoints
 
@@ -95,32 +95,44 @@ Covers `validateHubSpotPayload`, `handleHubSpotErrors`, `sumArray`, `streams`, t
 - [Deals](https://developers.hubspot.com/docs/api/crm/deals)
 - [Associations](https://developers.hubspot.com/docs/api/crm/associations)
 - [Pipelines](https://developers.hubspot.com/docs/api/crm/pipelines)
-- [Search](https://developers.hubspot.com/docs/api/crm/search)
+- [Properties](https://developers.hubspot.com/docs/api/crm/properties), unique `sync_external_id` property (created once, see Setup)
 - [Batch upsert](https://developers.hubspot.com/docs/api-reference/legacy/crm/objects/contacts/batch/upsert-contacts)
+- [Search](https://developers.hubspot.com/docs/api/crm/search), first deal sync only, since replaced (see "Idempotent sync")
 
 ## Decisions
 
+Decisions below were checked against the live portal rather than taken from the docs alone. The first three carry most of the design; the table covers the rest.
+
+### Idempotent sync
+
+Contacts upsert through `batch/upsert` with `idProperty: email`, which HubSpot already enforces as unique. Deals have no equivalent: `dealname` isn't unique, and `batch/upsert` rejects it (`400`, "Unable to perform update/upsert by non-unique 0-3 property dealname").
+
+The first deal sync searched for an existing deal, then created or updated it. That raced HubSpot's Search index, which lags a few seconds behind writes: two back-to-back runs both reported `created: 2`. The fix moves uniqueness into HubSpot: a custom deal property, `sync_external_id`, marked "unique value" and filled with each record's `source_id`, so renaming a deal doesn't break the sync. Deals now upsert by it the same way contacts upsert by email, and two back-to-back runs report `created: 2`, then `updated: 2`. A local `source_id → dealId` map was rejected because it only protects records this process created and remembers, not a concurrent run, a deal created in the UI, or a lost file.
+
+The property is a one-time setup step in the UI (Setup, step 4). Creating it through `POST /crm/v3/properties/deals` needs a schema scope that the sync token doesn't have and doesn't need (`403 MISSING_SCOPES`, confirmed live).
+
+### Batching and partial failures
+
+Both syncs send `batch/upsert` in chunks of 100, HubSpot's hard cap (`400` with 101 inputs). Without `objectWriteTraceId`, one invalid record rejects the whole request and nothing in it is written, so each chunk reports a single outcome: `created`/`updated` counts with each record's `id`, or the error plus the IDs to fix and re-run. Records without `email`/`source_id` are never sent and are listed in `skippedRecords`.
+
+Results are never matched back to input records: `data.results` doesn't come back in input order, and HubSpot lowercases emails. An intermediate version matched by email and reported a mixed-case contact as failed even though HubSpot had saved it.
+
+Per-record results were probed too. With a unique `objectWriteTraceId` per input, upsert answers `207`, writes the valid records and lists the invalid ones in `errors[]`, although the [docs](https://developers.hubspot.com/docs/api-reference/error-handling#multi-status-errors) only describe this for batch create. That is the next step for larger or untrusted input, and cheaper than retrying a failed chunk one record at a time. Duplicate IDs reject the whole request with or without trace IDs (`400`, "Duplicate IDs found in batch input") and are left to fail loudly rather than silently dropped.
+
+### Error handling
+
+- **Invalid payloads:** `validateHubSpotPayload` throws a `ValidationError` before any request is sent.
+- **Network errors and timeouts** (10 s per request): retried.
+- **`429`:** retried with exponential backoff (the base delay doubles each attempt) plus random jitter; `Retry-After` takes precedence when HubSpot sends it.
+- **`500`/`502`/`503`/`504`:** retried the same way. All retries stop at `HUBSPOT_MAX_RETRIES`.
+- **`401`/`403` and other `4xx`:** not retried, since a bad token or payload fails the same way twice.
+- **Logs:** every failed attempt logs method, URL, status, HubSpot's `category` and message. The `Authorization` header is redacted and request bodies aren't logged. The token only lives in `.env` (gitignored), and startup fails fast without it.
+
+### Other decisions
+
 | Decision | Reason |
 |---|---|
-| axios, not `@hubspot/api-client` | SDK hides its own retry/error handling, the point being evaluated. |
-| CommonJS, not TypeScript | Spec requires `require`/`module.exports` explicitly; a build step fights that. |
-| `pipeline`/`dealstage`, not the spec's `hs_pipeline`/`hs_stage` | Those two don't exist on HubSpot deals. Real names, confirmed against docs. |
-| Associations on dated version `2026-09` | HubSpot moved off `v3`/`v4` for this endpoint. The `default` association route is idempotent by design, no client-side existence check needed. |
-| Contacts sync via `batch/upsert` (`idProperty: email`) | Atomic, server-side, one call. Email is unique for contacts by default. |
-| Deals sync via `batch/upsert` (`idProperty: sync_external_id`) | `dealname` isn't unique, `400` confirmed live. Created a custom deal property, `sync_external_id`, marked "unique value" via `POST /crm/v3/properties/deals` (`hasUniqueValue: true`), populated with each record's `source_id`. Same atomic mechanism as contacts, no search involved. |
-| Retry on `429/500/502/503/504` + network errors, not `400/401/403/404/409` | Client/auth errors don't get better on retry. Exponential backoff + jitter, `Retry-After` overrides when present, capped at `HUBSPOT_MAX_RETRIES`. |
-| Sync processes records sequentially | Avoids rate-limit bursts, keeps per-record error isolation simple (one bad record fails, the rest continue). |
-
-## Idempotency: contacts vs deals
-
-`dealname` isn't unique in HubSpot, multiple deals can share a name, so `batch/upsert` rejects it as an `idProperty` (`400`, confirmed live: `"Unable to perform update/upsert by non-unique 0-3 property dealname"`). An earlier version of this sync used search-then-write for deals (search for an existing deal, then create or update), which raced HubSpot's Search API: two immediate `sync-deals` runs produced `created: 2` both times instead of `created → updated`, because the index lags a few seconds behind writes.
-
-Fixed by creating a custom deal property instead of working around the race:
-
-1. `POST /crm/v3/properties/deals` with `hasUniqueValue: true`, a unique property, same guarantee `email` gives contacts by default. ([docs](https://developers.hubspot.com/docs/api/crm/properties#create-unique-identifier-properties))
-2. `sync_external_id`, populated with each record's `source_id`, a stable external identifier, not `dealname`. Models a real migration scenario: the source system's record ID, decoupled from the display name, which can change without breaking the sync (`data/deals.json` carries both fields separately for this reason).
-3. `syncDealsWithHubSpot` now calls `batch/upsert` with `idProperty: 'sync_external_id'`, same atomic, one-call mechanism contacts already used, no search involved.
-
-Verified live: two immediate `sync-deals` runs now produce `created: 2` then `updated: 2`, no duplicates.
-
-A local file mapping `source_id → dealId` was considered as a code-only alternative, rejected, because it only closes the race for records this exact process creates and remembers. A second process running concurrently, a deal created manually in the UI, or a deleted local file all reopen the same window. The unique-property fix has no such gap: HubSpot enforces it centrally, regardless of who's writing.
+| `pipeline`/`dealstage`, not the spec's `hs_pipeline`/`hs_stage` | The spec's names don't exist on deals (`404` for both, confirmed live). |
+| axios, not `@hubspot/api-client` | The SDK hides its own retry and error handling, which is what this test evaluates. |
+| Associations on dated version `2026-09` | HubSpot moved this endpoint off `v3`/`v4`. The `default` association route is idempotent by design, so no client-side existence check. |
+| Pipeline/stage defaults in `hubSpotService` | Callers (examples today, any future controller) send business data only; the service falls back to `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID` when a record doesn't set them. |
