@@ -29,7 +29,9 @@ function createHubSpotDeal(properties = {}) {
 
 function toBatchReport(outcome, operation) {
   if (outcome.error) {
-    logHubSpotError(outcome.error, { operation, ids: outcome.ids });
+    if (!(outcome.error instanceof ValidationError)) {
+      logHubSpotError(outcome.error, { operation, ids: outcome.ids });
+    }
     return { status: 'failed', size: outcome.ids.length, ids: outcome.ids, error: describeError(outcome.error) };
   }
 
