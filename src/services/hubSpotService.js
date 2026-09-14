@@ -15,13 +15,46 @@ function describeError(error) {
   return { message: classified.message, status: classified.status, code: classified.code };
 }
 
-function summarize(results) {
+function resolveDealPipelineDefaults(properties) {
   return {
-    total: results.length,
-    created: results.filter((r) => r.status === 'created').length,
-    updated: results.filter((r) => r.status === 'updated').length,
-    failed: results.filter((r) => r.status === 'failed').length,
-    results,
+    pipeline: properties.pipeline || config.hubspot.pipelineId,
+    dealstage: properties.dealstage || config.hubspot.stageId,
+  };
+}
+
+function createHubSpotDeal(properties = {}) {
+  const payload = { ...properties, ...resolveDealPipelineDefaults(properties) };
+  return dealRepository.createHubSpotDeal(payload);
+}
+
+function toBatchReport(outcome, operation) {
+  if (outcome.error) {
+    logHubSpotError(outcome.error, { operation, ids: outcome.ids });
+    return { status: 'failed', size: outcome.ids.length, ids: outcome.ids, error: describeError(outcome.error) };
+  }
+
+  const created = outcome.records.filter((record) => record.isNew).length;
+  return {
+    status: 'succeeded',
+    size: outcome.records.length,
+    created,
+    updated: outcome.records.length - created,
+    records: outcome.records,
+  };
+}
+
+function summarize(total, batches, skippedRecords) {
+  const succeeded = batches.filter((batch) => batch.status === 'succeeded');
+  const failed = batches.filter((batch) => batch.status === 'failed');
+
+  return {
+    total,
+    created: succeeded.reduce((count, batch) => count + batch.created, 0),
+    updated: succeeded.reduce((count, batch) => count + batch.updated, 0),
+    failed: failed.reduce((count, batch) => count + batch.size, 0),
+    skipped: skippedRecords.length,
+    batches,
+    skippedRecords,
   };
 }
 
@@ -30,47 +63,28 @@ async function syncContactsWithHubSpot(contacts) {
     throw new TypeError('contacts must be an array');
   }
 
-  const results = [];
+  const skippedRecords = [];
+  const propertiesList = [];
 
-  for (const [index, input] of contacts.entries()) {
-    const identifier = (input && input.email) || `#${index}`;
-
+  contacts.forEach((input, index) => {
     if (!input || !input.email) {
-      results.push({
-        identifier,
-        input,
-        status: 'failed',
-        id: null,
-        error: { message: 'email is required to sync a contact idempotently' },
-      });
-      continue;
+      skippedRecords.push({ index, input, reason: 'email is required to sync a contact idempotently' });
+      return;
     }
 
-    const properties = {
+    propertiesList.push({
       email: input.email,
       ...(input.firstname !== undefined ? { firstname: input.firstname } : {}),
       ...(input.lastname !== undefined ? { lastname: input.lastname } : {}),
-    };
+    });
+  });
 
-    try {
-      // Native atomic upsert-by-email no client-side search, so no eventual-consistency race like the one
-      // found for deals below.
-      const result = await contactRepository.upsertContactByEmail(properties);
+  // Native atomic upsert-by-email, no client-side search, so no eventual-consistency race like the one
+  // found for deals below.
+  const outcomes = await contactRepository.batchUpsertContactsByEmail(propertiesList);
+  const batches = outcomes.map((outcome) => toBatchReport(outcome, 'syncContactsWithHubSpot'));
 
-      results.push({
-        identifier,
-        input,
-        status: result.isNew ? 'created' : 'updated',
-        id: result.id,
-        error: null,
-      });
-    } catch (error) {
-      logHubSpotError(error, { operation: 'syncContactsWithHubSpot', identifier });
-      results.push({ identifier, input, status: 'failed', id: null, error: describeError(error) });
-    }
-  }
-
-  return summarize(results);
+  return summarize(contacts.length, batches, skippedRecords);
 }
 
 async function syncDealsWithHubSpot(deals) {
@@ -78,27 +92,19 @@ async function syncDealsWithHubSpot(deals) {
     throw new TypeError('deals must be an array');
   }
 
-  const results = [];
+  const skippedRecords = [];
+  const propertiesList = [];
 
-  for (const [index, input] of deals.entries()) {
-    const identifier = (input && input.source_id) || `#${index}`;
-
+  deals.forEach((input, index) => {
     if (!input || !input.source_id) {
-      results.push({
-        identifier,
-        input,
-        status: 'failed',
-        id: null,
-        error: { message: 'source_id is required to sync a deal idempotently' },
-      });
-      continue;
+      skippedRecords.push({ index, input, reason: 'source_id is required to sync a deal idempotently' });
+      return;
     }
 
-    const properties = {
+    propertiesList.push({
       dealname: input.dealname,
       amount: input.amount,
-      pipeline: input.pipeline || config.hubspot.pipelineId,
-      dealstage: input.dealstage || config.hubspot.stageId,
+      ...resolveDealPipelineDefaults(input),
       // source_id models the natural key a real external system would provide
       // (a record ID from whatever CRM/ERP this sync is migrating from); it's
       // stable even if dealname changes later. Stored in HubSpot's
@@ -106,25 +112,13 @@ async function syncDealsWithHubSpot(deals) {
       // what makes the atomic batch/upsert possible for deals, same mechanism
       // contacts get for free from `email`.
       sync_external_id: input.source_id,
-    };
+    });
+  });
 
-    try {
-      const result = await dealRepository.upsertDealByExternalId(properties);
+  const outcomes = await dealRepository.batchUpsertDealsByExternalId(propertiesList);
+  const batches = outcomes.map((outcome) => toBatchReport(outcome, 'syncDealsWithHubSpot'));
 
-      results.push({
-        identifier,
-        input,
-        status: result.isNew ? 'created' : 'updated',
-        id: result.id,
-        error: null,
-      });
-    } catch (error) {
-      logHubSpotError(error, { operation: 'syncDealsWithHubSpot', identifier });
-      results.push({ identifier, input, status: 'failed', id: null, error: describeError(error) });
-    }
-  }
-
-  return summarize(results);
+  return summarize(deals.length, batches, skippedRecords);
 }
 
 module.exports = {
@@ -139,12 +133,12 @@ module.exports = {
   deleteHubSpotContact: contactRepository.deleteHubSpotContact,
 
   getHubSpotDeals: dealRepository.getHubSpotDeals,
-  createHubSpotDeal: dealRepository.createHubSpotDeal,
   updateHubSpotDeal: dealRepository.updateHubSpotDeal,
   deleteHubSpotDeal: dealRepository.deleteHubSpotDeal,
+  associateContactToDeal,
 
   // Orchestration (real logic lives here)
+  createHubSpotDeal,
   syncContactsWithHubSpot,
   syncDealsWithHubSpot,
-  associateContactToDeal,
 };
