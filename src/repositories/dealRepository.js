@@ -1,10 +1,12 @@
 'use strict';
 
 const hubSpotClient = require('../clients/hubSpotClient');
+const { chunk } = require('../utils/chunk');
 const { validateDealPayload, ValidationError } = require('../utils/validateHubSpotPayload');
 
 const DEALS_PATH = '/crm/v3/objects/deals';
 const DEFAULT_PROPERTIES = ['dealname', 'amount', 'pipeline', 'dealstage'];
+const MAX_BATCH_SIZE = 100;
 
 function mapDeal(raw) {
   return {
@@ -45,25 +47,48 @@ async function deleteHubSpotDeal(dealId) {
   return true;
 }
 
-// Native atomic upsert-by-property, same mechanism as contactRepository.upsertContactByEmail.
+// Native atomic upsert-by-property, same mechanism as contactRepository.batchUpsertContactsByEmail.
 // Deals have no unique property by default (dealname is NOT unique; batch/upsert
 // rejects it live with a 400), so this relies on a custom property created for this
 // purpose: `sync_external_id`, marked "unique value" in the portal (Settings >
 // Properties > Deals > sync_external_id > hasUniqueValue: true, verified via
-// GET /crm/v3/properties/deals/sync_external_id). Populated with `dealname` as the
-// natural key. Docs: https://developers.hubspot.com/docs/api/crm/properties#create-unique-identifier-properties
-async function upsertDealByExternalId(properties) {
-  if (!properties || !properties.sync_external_id) {
-    throw new ValidationError('sync_external_id is required to upsert a deal', ['properties.sync_external_id is required']);
+// GET /crm/v3/properties/deals/sync_external_id). Populated with each record's `source_id`
+// as the natural key. Docs: https://developers.hubspot.com/docs/api/crm/properties#create-unique-identifier-properties
+// HubSpot rejects the whole request if any input is invalid, so results are reported per chunk.
+async function batchUpsertDealsByExternalId(propertiesList) {
+  const outcomes = [];
+
+  for (const batch of chunk(propertiesList, MAX_BATCH_SIZE)) {
+    const ids = batch.map((properties) => properties?.sync_external_id);
+
+    try {
+      batch.forEach((properties) => {
+        if (!properties || !properties.sync_external_id) {
+          throw new ValidationError('sync_external_id is required to upsert a deal', ['properties.sync_external_id is required']);
+        }
+        validateDealPayload(properties);
+      });
+
+      const { data } = await hubSpotClient.post(`${DEALS_PATH}/batch/upsert`, {
+        inputs: batch.map((properties) => ({
+          id: properties.sync_external_id,
+          idProperty: 'sync_external_id',
+          properties,
+        })),
+      });
+
+      const records = data.results.map((result) => ({
+        id: result.id,
+        sync_external_id: result.properties.sync_external_id,
+        isNew: result.new,
+      }));
+      outcomes.push({ ids, records, error: null });
+    } catch (error) {
+      outcomes.push({ ids, records: [], error });
+    }
   }
-  validateDealPayload(properties);
 
-  const { data } = await hubSpotClient.post(`${DEALS_PATH}/batch/upsert`, {
-    inputs: [{ id: properties.sync_external_id, idProperty: 'sync_external_id', properties }],
-  });
-
-  const result = data.results[0];
-  return { ...mapDeal(result), isNew: result.new };
+  return outcomes;
 }
 
 module.exports = {
@@ -71,5 +96,5 @@ module.exports = {
   createHubSpotDeal,
   updateHubSpotDeal,
   deleteHubSpotDeal,
-  upsertDealByExternalId,
+  batchUpsertDealsByExternalId,
 };

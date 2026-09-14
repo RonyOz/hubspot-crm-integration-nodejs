@@ -1,10 +1,12 @@
 'use strict';
 
 const hubSpotClient = require('../clients/hubSpotClient');
+const { chunk } = require('../utils/chunk');
 const { validateContactPayload, ValidationError } = require('../utils/validateHubSpotPayload');
 
 const CONTACTS_PATH = '/crm/v3/objects/contacts';
 const DEFAULT_PROPERTIES = ['firstname', 'lastname', 'email'];
+const MAX_BATCH_SIZE = 100;
 
 function mapContact(raw) {
   return {
@@ -61,18 +63,37 @@ async function deleteHubSpotContact(contactId) {
   return true;
 }
 
-async function upsertContactByEmail(properties) {
-  if (!properties || !properties.email) {
-    throw new ValidationError('email is required to upsert a contact by email', ['properties.email is required']);
+// HubSpot rejects the whole request if any input is invalid, so results are reported per chunk.
+async function batchUpsertContactsByEmail(propertiesList) {
+  const outcomes = [];
+
+  for (const batch of chunk(propertiesList, MAX_BATCH_SIZE)) {
+    const ids = batch.map((properties) => properties?.email);
+
+    try {
+      batch.forEach((properties) => {
+        if (!properties || !properties.email) {
+          throw new ValidationError('email is required to upsert a contact by email', ['properties.email is required']);
+        }
+        validateContactPayload(properties);
+      });
+
+      const { data } = await hubSpotClient.post(`${CONTACTS_PATH}/batch/upsert`, {
+        inputs: batch.map((properties) => ({ id: properties.email, idProperty: 'email', properties })),
+      });
+
+      const records = data.results.map((result) => ({
+        id: result.id,
+        email: result.properties.email,
+        isNew: result.new,
+      }));
+      outcomes.push({ ids, records, error: null });
+    } catch (error) {
+      outcomes.push({ ids, records: [], error });
+    }
   }
-  validateContactPayload(properties);
 
-  const { data } = await hubSpotClient.post(`${CONTACTS_PATH}/batch/upsert`, {
-    inputs: [{ id: properties.email, idProperty: 'email', properties }],
-  });
-
-  const result = data.results[0];
-  return { ...mapContact(result), isNew: result.new };
+  return outcomes;
 }
 
 module.exports = {
@@ -81,5 +102,5 @@ module.exports = {
   createHubSpotContact,
   updateHubSpotContact,
   deleteHubSpotContact,
-  upsertContactByEmail,
+  batchUpsertContactsByEmail,
 };
