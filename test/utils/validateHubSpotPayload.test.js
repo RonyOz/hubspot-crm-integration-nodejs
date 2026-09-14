@@ -45,6 +45,14 @@ test('validateDealPayload rejects missing dealname', () => {
   assert.throws(() => validateDealPayload({}), ValidationError);
 });
 
+test('validateDealPayload accepts a partial update without dealname', () => {
+  assert.equal(validateDealPayload({ amount: '750' }, { partial: true }), true);
+});
+
+test('validateDealPayload still type-checks dealname on a partial update', () => {
+  assert.throws(() => validateDealPayload({ dealname: 42 }, { partial: true }), ValidationError);
+});
+
 test('validateDealPayload rejects non-numeric amount', () => {
   assert.throws(() => validateDealPayload({ dealname: 'X', amount: 'abc' }), ValidationError);
 });
