@@ -30,7 +30,7 @@ Portal used for this submission: `52016473` (`https://app.hubspot.com/contacts/5
 1. Portal → **Development** → **Keys** → **Service keys** → **Create service key**.
 2. Scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write`.
 3. Portal ID is the number in the record URL (`app.hubspot.com/contacts/{PORTAL_ID}/record/...`), not `hs_object_source_id`, which identifies the integration, not the portal. Cost me one wrong value in an earlier draft; caught it by reading the raw API response instead of trusting the account URL.
-4. `npm run examples:sync-deals` needs a custom deal property, `sync_external_id`, marked **unique value**, or it fails with `PROPERTY_DOESNT_EXIST`. Create it once: Settings → Properties → Deals → Create property → single-line text → advanced options → "unique value". (See "Idempotent sync" under Decisions for why.)
+4. `node src/examples/sync-deals.js` needs a custom deal property, `sync_external_id`, marked **unique value**, or it fails with `PROPERTY_DOESNT_EXIST`. Create it once: Settings → Properties → Deals → Create property → single-line text → advanced options → "unique value". (See "Idempotent sync" under Decisions for why.)
 
 ## Architecture
 
@@ -57,30 +57,30 @@ test/             node:test, pure/no-network layer only
 
 | Command | Demonstrates |
 |---|---|
-| `npm run fundamentals:callback` | `setTimeout` + callback |
-| `npm run fundamentals:async` | same, refactored to Promise + async/await |
-| `npm run fundamentals:modules` | CommonJS `require`/`module.exports` |
-| `npm run fundamentals:streams` | `Readable` → uppercase `Transform` → `process.stdout`, joined with `stream.pipeline` so errors propagate |
+| `node src/fundamentals/callback.js` | `setTimeout` + callback |
+| `node src/fundamentals/asyncAwait.js` | same, refactored to Promise + async/await |
+| `node src/fundamentals/main.js` | CommonJS `require`/`module.exports` of `utils_module.js` |
+| `node src/utils/streams.js` | `Readable` → uppercase `Transform` → `process.stdout`, joined with `stream.pipeline` so errors propagate |
 
 ## Running Section 2 (HubSpot)
 
-No-arg scripts have an npm shortcut. Anything taking an ID is run directly (skips the `npm run -- <args>` footgun):
+`<arg>` is required, `[arg]` is optional.
 
 | Command | Function |
 |---|---|
-| `npm run examples:list-pipelines` | `getDealPipelines` |
-| `npm run examples:list-contact-names` | `getHubSpotContactNames` |
-| `npm run examples:list-contacts` | `getHubSpotContacts [limit]` |
-| `npm run examples:create-contact` | `createHubSpotContact [firstname lastname email]` |
+| `node src/examples/list-pipelines.js` | `getDealPipelines` |
+| `node src/examples/list-contact-names.js` | `getHubSpotContactNames` |
+| `node src/examples/list-contacts.js [limit]` | `getHubSpotContacts` |
+| `node src/examples/create-contact.js [firstname lastname email]` | `createHubSpotContact` |
 | `node src/examples/update-contact.js <id> [firstname] [lastname] [email]` | `updateHubSpotContact` |
 | `node src/examples/delete-contact.js <id>` | `deleteHubSpotContact` |
-| `npm run examples:list-deals` | `getHubSpotDeals [limit]` |
-| `npm run examples:create-deal` | `createHubSpotDeal [dealname amount]` |
+| `node src/examples/list-deals.js [limit]` | `getHubSpotDeals` |
+| `node src/examples/create-deal.js [dealname amount]` | `createHubSpotDeal` |
 | `node src/examples/update-deal.js <id> [dealname] [amount]` | `updateHubSpotDeal` |
 | `node src/examples/delete-deal.js <id>` | `deleteHubSpotDeal` |
 | `node src/examples/associate-contact-deal.js <contactId> <dealId>` | `associateContactToDeal`, idempotent, run it twice |
-| `npm run examples:sync-contacts` | `syncContactsWithHubSpot`, upserts `data/contacts.json` |
-| `npm run examples:sync-deals` | `syncDealsWithHubSpot`, upserts `data/deals.json` |
+| `node src/examples/sync-contacts.js` | `syncContactsWithHubSpot`, upserts `data/contacts.json` |
+| `node src/examples/sync-deals.js` | `syncDealsWithHubSpot`, upserts `data/deals.json` |
 
 `data/*.json` are small seed files. Deal records skip `pipeline`/`dealstage`, those come from env, overridable per-record if present.
 
