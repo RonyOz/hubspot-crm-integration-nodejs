@@ -5,12 +5,7 @@ const { createHubSpotDeal } = require('../services/hubSpotService');
 async function run() {
   try {
     const [dealnameArg, amountArg] = process.argv.slice(2);
-    const properties = {
-      dealname: dealnameArg || `Demo Deal ${Date.now()}`,
-      amount: amountArg || '1000',
-    };
-
-    const deal = await createHubSpotDeal(properties);
+    const deal = await createHubSpotDeal(dealnameArg || `Demo Deal ${Date.now()}`, amountArg || '1000');
     console.log('Deal created:', deal);
   } catch (error) {
     console.error('Failed to create deal:', error.message);
