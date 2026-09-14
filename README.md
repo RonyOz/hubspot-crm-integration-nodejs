@@ -125,14 +125,17 @@ Per-record results were probed too. With a unique `objectWriteTraceId` per input
 - **Network errors and timeouts** (10 s per request): retried.
 - **`429`:** retried with exponential backoff (the base delay doubles each attempt) plus random jitter; `Retry-After` takes precedence when HubSpot sends it.
 - **`500`/`502`/`503`/`504`:** retried the same way. All retries stop at `HUBSPOT_MAX_RETRIES`.
+- **Retried writes:** retries apply to every method. That's safe for upserts and the association route, which are idempotent, but a plain create (`create-contact`, `create-deal`) that times out after HubSpot saved it can be created twice. Accepted because creates are one-off example calls; bulk writes go through the idempotent sync.
 - **`401`/`403` and other `4xx`:** not retried, since a bad token or payload fails the same way twice.
-- **Logs:** every failed attempt logs method, URL, status, HubSpot's `category` and message. The `Authorization` header is redacted and request bodies aren't logged. The token only lives in `.env` (gitignored), and startup fails fast without it.
+- **Logs:** only the HTTP client logs errors, once per failed attempt (method, URL, status, HubSpot's `category` and message); the sync reports failures in its summary instead of logging them a second time. The `Authorization` header is redacted and request bodies aren't logged. The token only lives in `.env` (gitignored), and startup fails fast without it.
 
 ### Other decisions
 
 | Decision | Reason |
 |---|---|
 | `pipeline`/`dealstage`, not the spec's `hs_pipeline`/`hs_stage` | The spec's names don't exist on deals (`404` for both, confirmed live). |
+| Rate limits handled reactively | No client-side throttling: a `429` backs off (see Error handling), and batching keeps call volume low, one request per 100 records. A long-running sync would budget requests against the portal's limit instead. |
+| Pagination through `paging.next.after` | `getHubSpotContacts`/`getHubSpotDeals` return `nextAfter` so callers page explicitly. `getHubSpotContactNames` walks every page at 100 per request (the API maximum) and keeps the names in memory, fine for a test portal; a large one would be processed page by page. |
 | axios, not `@hubspot/api-client` | The SDK hides its own retry and error handling, which is what this test evaluates. |
 | Associations on dated version `2026-09` | HubSpot moved this endpoint off `v3`/`v4`. The `default` association route is idempotent by design, so no client-side existence check. |
 | Pipeline/stage defaults in `hubSpotService` | Callers (examples today, any future controller) send business data only; the service falls back to `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID` when a record doesn't set them. |
