@@ -15,16 +15,15 @@ function describeError(error) {
   return { message: classified.message, status: classified.status, code: classified.code };
 }
 
-function resolveDealPipelineDefaults(properties) {
+function resolveDealPipelineDefaults(properties = {}) {
   return {
     pipeline: properties.pipeline || config.hubspot.pipelineId,
     dealstage: properties.dealstage || config.hubspot.stageId,
   };
 }
 
-function createHubSpotDeal(properties = {}) {
-  const payload = { ...properties, ...resolveDealPipelineDefaults(properties) };
-  return dealRepository.createHubSpotDeal(payload);
+function createHubSpotDeal(dealName, amount) {
+  return dealRepository.createHubSpotDeal({ dealname: dealName, amount, ...resolveDealPipelineDefaults() });
 }
 
 function toBatchReport(outcome) {
@@ -132,6 +131,7 @@ module.exports = {
   deleteHubSpotContact: contactRepository.deleteHubSpotContact,
 
   getHubSpotDeals: dealRepository.getHubSpotDeals,
+  getDealPipelines: dealRepository.getDealPipelines,
   updateHubSpotDeal: dealRepository.updateHubSpotDeal,
   deleteHubSpotDeal: dealRepository.deleteHubSpotDeal,
   associateContactToDeal,

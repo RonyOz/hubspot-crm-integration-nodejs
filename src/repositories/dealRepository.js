@@ -30,6 +30,15 @@ async function getHubSpotDeals({ limit = 10, after, properties = DEFAULT_PROPERT
   };
 }
 
+async function getDealPipelines() {
+  const { data } = await hubSpotClient.get('/crm/v3/pipelines/deals');
+  return data.results.map((pipeline) => ({
+    id: pipeline.id,
+    label: pipeline.label,
+    stages: pipeline.stages.map((stage) => ({ id: stage.id, label: stage.label })),
+  }));
+}
+
 async function createHubSpotDeal(properties) {
   validateDealPayload(properties);
   const { data } = await hubSpotClient.post(DEALS_PATH, { properties });
@@ -37,7 +46,7 @@ async function createHubSpotDeal(properties) {
 }
 
 async function updateHubSpotDeal(dealId, properties) {
-  validateDealPayload(properties);
+  validateDealPayload(properties, { partial: true });
   const { data } = await hubSpotClient.patch(`${DEALS_PATH}/${dealId}`, { properties });
   return mapDeal(data);
 }
@@ -88,6 +97,7 @@ async function batchUpsertDealsByExternalId(propertiesList) {
 
 module.exports = {
   getHubSpotDeals,
+  getDealPipelines,
   createHubSpotDeal,
   updateHubSpotDeal,
   deleteHubSpotDeal,

@@ -1,11 +1,11 @@
 'use strict';
 
-const hubSpotClient = require('../clients/hubSpotClient');
+const { getDealPipelines } = require('../services/hubSpotService');
 
 async function listDealPipelines() {
   try {
-    const { data } = await hubSpotClient.get('/crm/v3/pipelines/deals');
-    data.results.forEach((pipeline) => {
+    const pipelines = await getDealPipelines();
+    pipelines.forEach((pipeline) => {
       console.log(`Pipeline: ${pipeline.label} (id: ${pipeline.id})`);
       pipeline.stages.forEach((stage) => {
         console.log(`  Stage: ${stage.label} (id: ${stage.id})`);
