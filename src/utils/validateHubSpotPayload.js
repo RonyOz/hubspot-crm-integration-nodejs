@@ -40,14 +40,15 @@ function validateContactPayload(properties = {}) {
   return true;
 }
 
-function validateDealPayload(properties = {}) {
+function validateDealPayload(properties = {}, { partial = false } = {}) {
   const errors = [];
 
   if (typeof properties !== 'object' || properties === null) {
     throw new ValidationError('Deal properties must be an object', ['properties is not an object']);
   }
 
-  if (!properties.dealname || typeof properties.dealname !== 'string') {
+  const dealnameRequired = !partial || properties.dealname !== undefined;
+  if (dealnameRequired && (!properties.dealname || typeof properties.dealname !== 'string')) {
     errors.push('dealname is required and must be a string');
   }
 
@@ -70,9 +71,9 @@ function validateDealPayload(properties = {}) {
   return true;
 }
 
-function validateHubSpotPayload(objectType, properties) {
+function validateHubSpotPayload(objectType, properties, options) {
   if (objectType === 'contact') return validateContactPayload(properties);
-  if (objectType === 'deal') return validateDealPayload(properties);
+  if (objectType === 'deal') return validateDealPayload(properties, options);
   throw new ValidationError(`Unknown HubSpot object type: "${objectType}"`);
 }
 
