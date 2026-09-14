@@ -14,11 +14,6 @@ async function run() {
     console.log('Deal created:', deal);
   } catch (error) {
     console.error('Failed to create deal:', error.message);
-    if (error.response && error.response.status === 409) {
-      console.error(
-        'A deal with this name may already exist — try update-deal.js, or use sync-deals.js for idempotent upserts.'
-      );
-    }
     process.exitCode = 1;
   }
 }
