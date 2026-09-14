@@ -1,6 +1,5 @@
 'use strict';
 
-const config = require('../config/env');
 const { createHubSpotDeal } = require('../services/hubSpotService');
 
 async function run() {
@@ -9,8 +8,6 @@ async function run() {
     const properties = {
       dealname: dealnameArg || `Demo Deal ${Date.now()}`,
       amount: amountArg || '1000',
-      pipeline: config.hubspot.pipelineId,
-      dealstage: config.hubspot.stageId,
     };
 
     const deal = await createHubSpotDeal(properties);
