@@ -8,8 +8,8 @@ async function run() {
   try {
     const summary = await syncContactsWithHubSpot(contacts);
     console.log(JSON.stringify(summary, null, 2));
-    if (summary.failed > 0) {
-      console.warn(`${summary.failed} record(s) failed to sync — see "results" above for details.`);
+    if (summary.failed > 0 || summary.skipped > 0) {
+      console.warn(`${summary.failed} record(s) failed and ${summary.skipped} skipped, see "batches" and "skippedRecords" above.`);
     }
   } catch (error) {
     console.error('Failed to run contact sync:', error.message);
