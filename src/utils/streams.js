@@ -1,6 +1,7 @@
 'use strict';
 
 const { Readable, Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 
 function createUppercaseTransform() {
   return new Transform({
@@ -11,13 +12,14 @@ function createUppercaseTransform() {
 }
 
 function runUppercaseStreamDemo(text) {
-  const source = Readable.from(text);
-  const uppercase = createUppercaseTransform();
-  return source.pipe(uppercase).pipe(process.stdout);
+  return pipeline(Readable.from(text), createUppercaseTransform(), process.stdout);
 }
 
 if (require.main === module) {
-  runUppercaseStreamDemo('hello streams, this text will be uppercased\n');
+  runUppercaseStreamDemo('hello streams, this text will be uppercased\n').catch((error) => {
+    console.error('Stream failed:', error.message);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = { createUppercaseTransform, runUppercaseStreamDemo };
