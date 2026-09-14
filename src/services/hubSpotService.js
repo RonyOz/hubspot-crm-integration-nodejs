@@ -4,7 +4,7 @@ const config = require('../config/env');
 const contactRepository = require('../repositories/contactRepository');
 const dealRepository = require('../repositories/dealRepository');
 const { associateContactToDeal } = require('../repositories/associationRepository');
-const { logHubSpotError, classifyHubSpotError } = require('../utils/handleHubSpotErrors');
+const { classifyHubSpotError } = require('../utils/handleHubSpotErrors');
 const { ValidationError } = require('../utils/validateHubSpotPayload');
 
 function describeError(error) {
@@ -27,11 +27,8 @@ function createHubSpotDeal(properties = {}) {
   return dealRepository.createHubSpotDeal(payload);
 }
 
-function toBatchReport(outcome, operation) {
+function toBatchReport(outcome) {
   if (outcome.error) {
-    if (!(outcome.error instanceof ValidationError)) {
-      logHubSpotError(outcome.error, { operation, ids: outcome.ids });
-    }
     return { status: 'failed', size: outcome.ids.length, ids: outcome.ids, error: describeError(outcome.error) };
   }
 
@@ -84,7 +81,7 @@ async function syncContactsWithHubSpot(contacts) {
   // Native atomic upsert-by-email, no client-side search, so no eventual-consistency race like the one
   // found for deals below.
   const outcomes = await contactRepository.batchUpsertContactsByEmail(propertiesList);
-  const batches = outcomes.map((outcome) => toBatchReport(outcome, 'syncContactsWithHubSpot'));
+  const batches = outcomes.map((outcome) => toBatchReport(outcome));
 
   return summarize(contacts.length, batches, skippedRecords);
 }
@@ -118,7 +115,7 @@ async function syncDealsWithHubSpot(deals) {
   });
 
   const outcomes = await dealRepository.batchUpsertDealsByExternalId(propertiesList);
-  const batches = outcomes.map((outcome) => toBatchReport(outcome, 'syncDealsWithHubSpot'));
+  const batches = outcomes.map((outcome) => toBatchReport(outcome));
 
   return summarize(deals.length, batches, skippedRecords);
 }
