@@ -11,16 +11,19 @@ npm install
 cp .env.example .env   # fill in your values, see below
 ```
 
+Node 20+. Runtime dependencies: `axios` (HTTP client) and `dotenv` (loads `.env`); tests use the built-in `node:test`.
+
 | Variable | Value |
 |---|---|
 | `HUBSPOT_ACCESS_TOKEN` | Service Key token (`pat-na1-...`) |
-| `HUBSPOT_PORTAL_ID` | your portal ID |
 | `HUBSPOT_PIPELINE_ID` | deal pipeline internal ID, default `default` |
 | `HUBSPOT_STAGE_ID` | deal stage internal ID, default `appointmentscheduled` |
 | `HUBSPOT_MAX_RETRIES` | default `3` |
 | `HUBSPOT_RETRY_BASE_DELAY_MS` | default `500` |
 
 Get your own pipeline/stage IDs with `node src/examples/list-pipelines.js` after setting the token.
+
+Portal used for this submission: `52016473` (`https://app.hubspot.com/contacts/52016473`).
 
 **Credential**: private-app *creation* is being phased out on HubSpot's Unified Developer Platform. Use a **Service Key** instead, same token format, same scopes, same endpoints, just a different place to generate it.
 
@@ -40,12 +43,12 @@ Repositories own HubSpot's specific shapes (pagination cursors, `{id, properties
 ```
 src/
   config/         env loading, fails fast if HUBSPOT_ACCESS_TOKEN missing
-  clients/        hubSpotClient.js, axios instance + retry interceptor
+  clients/        hubSpotClient.js, axios instance + retry interceptor built on handleHubSpotErrors
   repositories/   contactRepository.js, dealRepository.js, associationRepository.js
   services/       hubSpotService.js, the only entry point examples call
   utils/          validateHubSpotPayload.js, handleHubSpotErrors.js, chunk.js, streams.js
   fundamentals/   Section 1, standalone, zero dependency on the rest of the repo
-  examples/       one script per function, real output to console
+  examples/       hubSpotApiHandler: one executable script per function, real output to console
 data/             seed JSON for the sync examples
 test/             node:test, pure/no-network layer only
 ```
@@ -57,7 +60,7 @@ test/             node:test, pure/no-network layer only
 | `npm run fundamentals:callback` | `setTimeout` + callback |
 | `npm run fundamentals:async` | same, refactored to Promise + async/await |
 | `npm run fundamentals:modules` | CommonJS `require`/`module.exports` |
-| `npm run fundamentals:streams` | `Readable` → uppercase `Transform` → `process.stdout` |
+| `npm run fundamentals:streams` | `Readable` → uppercase `Transform` → `process.stdout`, joined with `stream.pipeline` so errors propagate |
 
 ## Running Section 2 (HubSpot)
 
@@ -65,7 +68,7 @@ No-arg scripts have an npm shortcut. Anything taking an ID is run directly (skip
 
 | Command | Function |
 |---|---|
-| `npm run examples:list-pipelines` | `GET /crm/v3/pipelines/deals` |
+| `npm run examples:list-pipelines` | `getDealPipelines` |
 | `npm run examples:list-contact-names` | `getHubSpotContactNames` |
 | `npm run examples:list-contacts` | `getHubSpotContacts [limit]` |
 | `npm run examples:create-contact` | `createHubSpotContact [firstname lastname email]` |
@@ -121,7 +124,7 @@ Per-record results were probed too. With a unique `objectWriteTraceId` per input
 
 ### Error handling
 
-- **Invalid payloads:** `validateHubSpotPayload` throws a `ValidationError` before any request is sent.
+- **Invalid payloads:** `validateHubSpotPayload` throws a `ValidationError` before any request is sent. Deal creates and upserts require `dealname`; updates only check the fields they send.
 - **Network errors and timeouts** (10 s per request): retried.
 - **`429`:** retried with exponential backoff (the base delay doubles each attempt) plus random jitter; `Retry-After` takes precedence when HubSpot sends it.
 - **`500`/`502`/`503`/`504`:** retried the same way. All retries stop at `HUBSPOT_MAX_RETRIES`.
@@ -135,7 +138,7 @@ Per-record results were probed too. With a unique `objectWriteTraceId` per input
 |---|---|
 | `pipeline`/`dealstage`, not the spec's `hs_pipeline`/`hs_stage` | The spec's names don't exist on deals (`404` for both, confirmed live). |
 | Rate limits handled reactively | No client-side throttling: a `429` backs off (see Error handling), and batching keeps call volume low, one request per 100 records. A long-running sync would budget requests against the portal's limit instead. |
-| Pagination through `paging.next.after` | `getHubSpotContacts`/`getHubSpotDeals` return `nextAfter` so callers page explicitly. `getHubSpotContactNames` walks every page at 100 per request (the API maximum) and keeps the names in memory, fine for a test portal; a large one would be processed page by page. |
+| Pagination through `paging.next.after` | `getHubSpotContacts`/`getHubSpotDeals` take `limit`, `after` and `properties` (which fields come back) and return `nextAfter` so callers page explicitly; the list endpoint has no filters, so filtering would go through the Search API. `getHubSpotContactNames` walks every page at 100 per request (the API maximum) and keeps the names in memory, fine for a test portal; a large one would be processed page by page. |
 | axios, not `@hubspot/api-client` | The SDK hides its own retry and error handling, which is what this test evaluates. |
 | Associations on dated version `2026-09` | HubSpot moved this endpoint off `v3`/`v4`. The `default` association route is idempotent by design, so no client-side existence check. |
-| Pipeline/stage defaults in `hubSpotService` | Callers (examples today, any future controller) send business data only; the service falls back to `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID` when a record doesn't set them. |
+| Pipeline/stage defaults in `hubSpotService` | Callers (examples today, any future controller) send business data only: `createHubSpotDeal(dealName, amount)` takes pipeline and stage from `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID`, and the sync lets a record override them. |
