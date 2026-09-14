@@ -29,7 +29,7 @@ Portal used for this submission: `52016473` (`https://app.hubspot.com/contacts/5
 
 1. Portal → **Development** → **Keys** → **Service keys** → **Create service key**.
 2. Scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write`.
-3. Portal ID is the number in the record URL (`app.hubspot.com/contacts/{PORTAL_ID}/record/...`), not `hs_object_source_id`, which identifies the integration, not the portal. Cost me one wrong value in an earlier draft; caught it by reading the raw API response instead of trusting the account URL.
+3. Portal ID is the number in the record URL (`app.hubspot.com/contacts/{PORTAL_ID}/record/...`), not `hs_object_source_id`, which identifies the integration, not the portal. Confirmed by reading the raw API response.
 4. `node src/examples/sync-deals.js` needs a custom deal property, `sync_external_id`, marked **unique value**, or it fails with `PROPERTY_DOESNT_EXIST`. Create it once: Settings → Properties → Deals → Create property → single-line text → advanced options → "unique value". (See "Idempotent sync" under Decisions for why.)
 
 ## Architecture
@@ -102,6 +102,17 @@ Covers `validateHubSpotPayload`, `handleHubSpotErrors`, `chunk`, `sumArray`, `st
 - [Batch upsert](https://developers.hubspot.com/docs/api-reference/legacy/crm/objects/contacts/batch/upsert-contacts)
 - [Search](https://developers.hubspot.com/docs/api/crm/search), first deal sync only, since replaced (see "Idempotent sync")
 
+## Assumptions
+
+What the code takes as given, so it doesn't have to be inferred:
+
+- **Every deal in the source has a stable `source_id`.** It's the idempotency key, stored in `sync_external_id`; a deal without one is skipped, not created.
+- **Contacts are identified by email**, one per contact and case-insensitive (HubSpot stores it lowercased). A contact without an email is skipped.
+- **The sync is one-way and the source wins.** Each run overwrites the fields it sends, including edits made in HubSpot since the last run. Records removed from the source are left untouched in HubSpot.
+- **Source files are small and curated.** They're loaded whole into memory, and a duplicate or invalid record is treated as a data error that fails its chunk, not something to clean up silently.
+- **The portal is prepared:** the unique `sync_external_id` deal property exists (Setup, step 4), and deals without their own pipeline/stage belong in `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID`.
+- **Contact-to-deal links use HubSpot's default, unlabeled association.** No association labels are needed.
+
 ## Decisions
 
 Decisions below were checked against the live portal rather than taken from the docs alone. The first three carry most of the design; the table covers the rest.
@@ -137,8 +148,22 @@ Per-record results were probed too. With a unique `objectWriteTraceId` per input
 | Decision | Reason |
 |---|---|
 | `pipeline`/`dealstage`, not the spec's `hs_pipeline`/`hs_stage` | The spec's names don't exist on deals (`404` for both, confirmed live). |
-| Rate limits handled reactively | No client-side throttling: a `429` backs off (see Error handling), and batching keeps call volume low, one request per 100 records. A long-running sync would budget requests against the portal's limit instead. |
+| Rate limits handled reactively | No client-side throttling: a `429` backs off (see Error handling), and batching keeps call volume low, one request per 100 records. This portal allows 100 requests per 10 s and 250,000 per day (`X-HubSpot-RateLimit-*` response headers, confirmed live). |
 | Pagination through `paging.next.after` | `getHubSpotContacts`/`getHubSpotDeals` take `limit`, `after` and `properties` (which fields come back) and return `nextAfter` so callers page explicitly; the list endpoint has no filters, so filtering would go through the Search API. `getHubSpotContactNames` walks every page at 100 per request (the API maximum) and keeps the names in memory, fine for a test portal; a large one would be processed page by page. |
 | axios, not `@hubspot/api-client` | The SDK hides its own retry and error handling, which is what this test evaluates. |
 | Associations on dated version `2026-09` | HubSpot moved this endpoint off `v3`/`v4`. The `default` association route is idempotent by design, so no client-side existence check. |
 | Pipeline/stage defaults in `hubSpotService` | Callers (examples today, any future controller) send business data only: `createHubSpotDeal(dealName, amount)` takes pipeline and stage from `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID`, and the sync lets a record override them. |
+
+## Production readiness
+
+Before scaling this to a real customer portal, I'd ask three questions: what's the volume, is the sync one-way or two-way, and is the source trusted. Priority follows from those answers, not from a pattern catalog.
+
+- If volume is high: stream the input and process page by page, and budget requests against X-HubSpot-RateLimit-* instead of only reacting to 429.
+
+- If writes must be reliable: route plain creates through upsert with a unique key so a timeout can't duplicate, and persist the sync run report instead of printing it.
+
+- If the sync is two-way: define a policy for source deletions and check hs_lastmodifieddate before overwriting HubSpot edits.
+
+- Always: validate config at startup, and run integration tests against a dedicated test portal in CI.
+
+What I wouldn't do: an async queue, a local ID cache, or webhooks. Batch upsert with a unique property solves idempotency without auxiliary state. Revisit only if volume or two-way sync demands it.
