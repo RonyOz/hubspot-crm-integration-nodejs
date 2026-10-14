@@ -1,169 +1,188 @@
-# HubSpot CRM Integration - Node.js
+# HubSpot CRM Integration Service
 
-A layered Node.js service that integrates with the HubSpot CRM, covering both halves of the technical test: Section 1 (Node.js fundamentals, callbacks, Promises/async-await, CommonJS modules, streams) and Section 2 (Contacts and Deals management against a live portal).
+> A modular, production-ready Node.js service for integrating with the HubSpot CRM API, featuring resilient HTTP communication, layered domain architecture, and idempotent batch synchronization.
 
-Every HTTP call in this repo hits the real HubSpot API. No mocks, no simulated responses. The code is organized into production-shaped layers, config, HTTP client, domain repositories, orchestration service, and executable examples, so pagination, rate limits, retries, and idempotent sync are handled where they belong, not buried in standalone scripts.
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
+[![Built-in Test Runner](https://img.shields.io/badge/Tests-node%3Atest-brightgreen.svg)](https://nodejs.org/api/test.html)
 
-## Setup
+---
 
-```bash
-npm install
-cp .env.example .env   # fill in your values, see below
-```
+## Overview
 
-Node 20+. Runtime dependencies: `axios` (HTTP client) and `dotenv` (loads `.env`); tests use the built-in `node:test`.
+This repository provides a clean, production-oriented Node.js integration with HubSpot CRM (v3 API). It implements a layered architecture to manage Contacts, Deals, Pipelines, and Associations against a live HubSpot portal.
 
-| Variable | Value |
-|---|---|
-| `HUBSPOT_ACCESS_TOKEN` | Service Key token (`pat-na1-...`) |
-| `HUBSPOT_PIPELINE_ID` | deal pipeline internal ID, default `default` |
-| `HUBSPOT_STAGE_ID` | deal stage internal ID, default `appointmentscheduled` |
-| `HUBSPOT_MAX_RETRIES` | default `3` |
-| `HUBSPOT_RETRY_BASE_DELAY_MS` | default `500` |
+All operations communicate directly with real HubSpot endpoints, handling real-world distributed API challenges:
+- **Resilient HTTP Client**: Axios interceptors implementing exponential backoff, full jitter, dynamic `Retry-After` header parsing, and retry handling for `429` (rate limits) and transient `5xx` server errors.
+- **Idempotent Batch Upsert**: High-throughput synchronization of Contacts (keyed by email) and Deals (keyed by a custom unique `sync_external_id`), eliminating duplicate creation without relying on delayed Search indexing.
+- **Layered Clean Architecture**: Strict separation of concerns across configuration, HTTP transport, domain repositories, orchestration services, and executable CLI scripts.
+- **Native Test Suite**: Comprehensive unit testing of payload validation, chunking, backoff calculations, and stream transformations using the built-in `node:test` runner.
 
-Get your own pipeline/stage IDs with `node src/examples/list-pipelines.js` after setting the token.
-
-Portal used for this submission: `52016473` (`https://app.hubspot.com/contacts/52016473`).
-
-**Credential**: private-app *creation* is being phased out on HubSpot's Unified Developer Platform. Use a **Service Key** instead, same token format, same scopes, same endpoints, just a different place to generate it.
-
-1. Portal → **Development** → **Keys** → **Service keys** → **Create service key**.
-2. Scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write`.
-3. Portal ID is the number in the record URL (`app.hubspot.com/contacts/{PORTAL_ID}/record/...`), not `hs_object_source_id`, which identifies the integration, not the portal. Confirmed by reading the raw API response.
-4. `node src/examples/sync-deals.js` needs a custom deal property, `sync_external_id`, marked **unique value**, or it fails with `PROPERTY_DOESNT_EXIST`. Create it once: Settings → Properties → Deals → Create property → single-line text → advanced options → "unique value". (See "Idempotent sync" under Decisions for why.)
+---
 
 ## Architecture
 
 ![Component Diagram](docs/diagrams/ComponentDiagram.png)
 
-Every `examples/*.js` script goes through `hubSpotService`, no exceptions. Most CRUD is a one-line delegation there; the service only holds logic a caller shouldn't have to repeat (deal pipeline/stage defaults, sync input checks, per-chunk sync summaries). One rule, no special cases to memorize when reading the code.
+The application enforces a strict unidirectional flow: CLI consumers call `hubSpotService`, which coordinates domain rules and delegates data persistence to specialized repositories, interacting with HubSpot exclusively through `hubSpotClient`.
 
-Repositories own HubSpot's specific shapes (pagination cursors, `{id, properties:{...}}` nesting, the 100-input batch limit) and hand back flat objects. `hubSpotClient` is the only thing that knows about HTTP, auth header, timeout, retry/backoff.
+- **`config/`**: Centralized environment loader that fails fast on startup if mandatory credentials (`HUBSPOT_ACCESS_TOKEN`) are missing.
+- **`clients/`**: `hubSpotClient.js` configures the Axios instance, injects authentication headers, sets network timeouts (10s), and attaches retry interceptors powered by `handleHubSpotErrors.js`.
+- **`repositories/`**: Domain-specific data layers (`contactRepository`, `dealRepository`, `associationRepository`) that normalize HubSpot's nested `{ id, properties: { ... } }` schemas, manage pagination cursors, and handle raw batch API limits.
+- **`services/`**: `hubSpotService.js` orchestrates business logic, provides deal stage/pipeline fallbacks, and conducts chunked batch sync operations.
+- **`utils/`**: Pure functions for payload validation (`validateHubSpotPayload`), error classification & backoff calculation (`handleHubSpotErrors`), array chunking (`chunk`), and transform streams (`streams`).
+- **`examples/`**: Executable CLI scripts showcasing individual CRM operations with live console output.
+- **`fundamentals/`**: Core Node.js demonstrations covering asynchronous paradigms (callbacks, Promises, async/await), CommonJS modules, and stream pipelines.
 
 ```
 src/
-  config/         env loading, fails fast if HUBSPOT_ACCESS_TOKEN missing
-  clients/        hubSpotClient.js, axios instance + retry interceptor built on handleHubSpotErrors
-  repositories/   contactRepository.js, dealRepository.js, associationRepository.js
-  services/       hubSpotService.js, the only entry point examples call
-  utils/          validateHubSpotPayload.js, handleHubSpotErrors.js, chunk.js, streams.js
-  fundamentals/   Section 1, standalone, zero dependency on the rest of the repo
-  examples/       hubSpotApiHandler: one executable script per function, real output to console
-data/             seed JSON for the sync examples
-test/             node:test, pure/no-network layer only
+├── clients/        # Axios HTTP client with retry interceptor, backoff & error classification
+├── config/         # Environment variables & fail-fast configuration loader
+├── examples/       # Standalone CLI executable scripts for CRM operations
+├── fundamentals/   # Demonstrations of asynchronous patterns, CommonJS & Streams
+├── repositories/   # Low-level HubSpot API wrappers (Contacts, Deals, Associations)
+├── services/       # Domain orchestration service (idempotency, defaults & validation)
+└── utils/          # Error classifiers, backoff calculators, payload validators & stream transforms
+data/               # Sample seed JSON files for batch synchronization
+test/               # Unit test suites executed with node:test
 ```
 
-## Running Section 1 (fundamentals)
+---
 
-| Command | Demonstrates |
-|---|---|
-| `node src/fundamentals/callback.js` | `setTimeout` + callback |
-| `node src/fundamentals/asyncAwait.js` | same, refactored to Promise + async/await |
-| `node src/fundamentals/main.js` | CommonJS `require`/`module.exports` of `utils_module.js` |
-| `node src/utils/streams.js` | `Readable` → uppercase `Transform` → `process.stdout`, joined with `stream.pipeline` so errors propagate |
+## Getting Started
 
-## Running Section 2 (HubSpot)
+### Prerequisites
 
-`<arg>` is required, `[arg]` is optional.
+- Node.js 20+
+- A HubSpot Portal with Developer access (Service Keys)
 
-| Command | Function |
-|---|---|
-| `node src/examples/list-pipelines.js` | `getDealPipelines` |
-| `node src/examples/list-contact-names.js` | `getHubSpotContactNames` |
-| `node src/examples/list-contacts.js [limit]` | `getHubSpotContacts` |
-| `node src/examples/create-contact.js [firstname lastname email]` | `createHubSpotContact` |
-| `node src/examples/update-contact.js <id> [firstname] [lastname] [email]` | `updateHubSpotContact` |
-| `node src/examples/delete-contact.js <id>` | `deleteHubSpotContact` |
-| `node src/examples/list-deals.js [limit]` | `getHubSpotDeals` |
-| `node src/examples/create-deal.js [dealname amount]` | `createHubSpotDeal` |
-| `node src/examples/update-deal.js <id> [dealname] [amount]` | `updateHubSpotDeal` |
-| `node src/examples/delete-deal.js <id>` | `deleteHubSpotDeal` |
-| `node src/examples/associate-contact-deal.js <contactId> <dealId>` | `associateContactToDeal`, idempotent, run it twice |
-| `node src/examples/sync-contacts.js` | `syncContactsWithHubSpot`, upserts `data/contacts.json` |
-| `node src/examples/sync-deals.js` | `syncDealsWithHubSpot`, upserts `data/deals.json` |
+### Installation
 
-`data/*.json` are small seed files. Deal records skip `pipeline`/`dealstage`, those come from env, overridable per-record if present.
+```bash
+git clone https://github.com/RonyOz/hubspot-crm-integration-nodejs.git
+cd hubspot-crm-integration-nodejs
+npm install
+cp .env.example .env
+```
 
-## Tests
+### Environment Configuration
+
+Configure `.env` with your HubSpot portal settings:
+
+| Variable | Description | Default |
+|:---|:---|:---|
+| `HUBSPOT_ACCESS_TOKEN` | HubSpot Service Key Bearer token (`pat-...`) | *Required* |
+| `HUBSPOT_PIPELINE_ID` | Internal deal pipeline ID | `default` |
+| `HUBSPOT_STAGE_ID` | Internal deal stage ID | `appointmentscheduled` |
+| `HUBSPOT_MAX_RETRIES` | Maximum retry attempts for transient errors | `3` |
+| `HUBSPOT_RETRY_BASE_DELAY_MS` | Initial delay in ms for exponential backoff | `500` |
+
+### HubSpot Portal Setup
+
+1. **Service Key Creation**:
+   - In HubSpot, navigate to **Development** → **Keys** → **Service keys** → **Create service key**.
+   - Grant the following scopes:
+     - `crm.objects.contacts.read`
+     - `crm.objects.contacts.write`
+     - `crm.objects.deals.read`
+     - `crm.objects.deals.write`
+   - Copy the generated token (`pat-...`) into `HUBSPOT_ACCESS_TOKEN`.
+
+2. **Custom Unique Property for Deals (Idempotent Sync)**:
+   - HubSpot enforces uniqueness natively for Contacts via `email`, but Deals lack a default unique key.
+   - Navigate to **Settings** → **Objects** → **Deals** → **Properties** → **Create property**.
+   - Create a property named `sync_external_id` (Field type: Single-line text).
+   - Under advanced settings, check **Require unique values for this property**.
+   - *This allows the batch upsert endpoint to safely match incoming records without duplicates.*
+
+3. **Retrieve Pipeline & Stage IDs**:
+   - Run `node src/examples/list-pipelines.js` to inspect your portal's deal pipelines and update `HUBSPOT_PIPELINE_ID` and `HUBSPOT_STAGE_ID` accordingly.
+
+---
+
+## Usage & CLI Scripts
+
+All CLI scripts interact directly with the live HubSpot API.
+
+### Contact Management
+
+| Command | Action |
+|:---|:---|
+| `node src/examples/list-contacts.js [limit]` | List contacts with pagination support |
+| `node src/examples/list-contact-names.js` | Fetch all contact names across all pages |
+| `node src/examples/create-contact.js [firstname lastname email]` | Create a single contact |
+| `node src/examples/update-contact.js <id> [firstname] [lastname] [email]` | Update an existing contact by ID |
+| `node src/examples/delete-contact.js <id>` | Delete a contact by ID |
+
+### Deal Management
+
+| Command | Action |
+|:---|:---|
+| `node src/examples/list-pipelines.js` | List deal pipelines and stages with internal IDs |
+| `node src/examples/list-deals.js [limit]` | List deals with pagination support |
+| `node src/examples/create-deal.js [dealname amount]` | Create a deal (uses default pipeline/stage) |
+| `node src/examples/update-deal.js <id> [dealname] [amount]` | Update deal properties by ID |
+| `node src/examples/delete-deal.js <id>` | Delete a deal by ID |
+
+### Associations & Batch Synchronization
+
+| Command | Action |
+|:---|:---|
+| `node src/examples/associate-contact-deal.js <contactId> <dealId>` | Idempotently associate a contact with a deal |
+| `node src/examples/sync-contacts.js` | Batch upsert contacts from `data/contacts.json` (keyed by email) |
+| `node src/examples/sync-deals.js` | Batch upsert deals from `data/deals.json` (keyed by `sync_external_id`) |
+
+### Core Node.js Demos
+
+| Command | Description |
+|:---|:---|
+| `node src/fundamentals/callback.js` | Asynchronous callback pattern using `setTimeout` |
+| `node src/fundamentals/asyncAwait.js` | Refactored asynchronous flow using Promises and `async`/`await` |
+| `node src/fundamentals/main.js` | CommonJS module export and consumption |
+| `node src/utils/streams.js` | Stream pipeline processing (`Readable` → `Transform` → `stdout`) |
+
+---
+
+## Architectural Decisions & Design Rationale
+
+### 1. Deterministic Idempotent Synchronization
+- **Contacts**: Upserted via HubSpot's `batch/upsert` endpoint using `idProperty: email`.
+- **Deals**: The HubSpot Search API suffers from write-to-index lag (several seconds). Synchronizing by searching first resulted in race conditions and duplicate records on rapid re-runs. To resolve this, synchronization uses `batch/upsert` bound to the unique custom property `sync_external_id` (storing the source record's ID). Back-to-back runs cleanly report `created` followed by `updated` with zero duplicates.
+
+### 2. Resilient Error Handling & Rate Limiting
+- **Client-Side Validation**: `validateHubSpotPayload` validates required schemas before any HTTP request is dispatched, preventing malformed requests from consuming API quota.
+- **Transient Failures & Backoff**: Network timeouts (10s) and HTTP `500`, `502`, `503`, `504` errors trigger retries with exponential backoff and random jitter.
+- **Rate Limit Throttling (`429`)**: The client dynamically respects `Retry-After` headers when provided by HubSpot; otherwise, it doubles delay per retry up to `HUBSPOT_MAX_RETRIES`.
+- **Non-retryable Errors**: Client errors (`400`, `401`, `403`, `404`) fail immediately without useless retries.
+
+### 3. Batching & Partial Failure Strategy
+- Both contact and deal synchronizations split datasets into chunks of 100 records (HubSpot's strict batch limit).
+- Input records without required identity keys (`email` or `source_id`) are filtered before network dispatch and reported in `skippedRecords`.
+- Chunk outcomes summarize created/updated record counts and capture batch-level rejection details cleanly.
+
+### 4. Direct HTTP Client vs. SDK
+- Instead of using `@hubspot/api-client`, this project uses a configured Axios instance. This enables explicit control over interceptor pipelines, granular timeout management, header redaction in logging, and customized retry policies tailored to real-world integration requirements.
+
+---
+
+## Testing
+
+Run unit tests using the Node.js built-in test runner:
 
 ```bash
 npm test
 ```
 
-Covers `validateHubSpotPayload`, `handleHubSpotErrors`, `chunk`, `sumArray`, `streams`, the pure layer, no network. Nothing else is unit-tested: the spec bans mocking HubSpot, and hitting the real API on every `npm test` run would mutate the portal every time. Repositories/services are verified by running the examples against a live portal instead.
+Unit tests focus on deterministic, non-network business logic:
+- Payload schema validation (`validateHubSpotPayload`)
+- Error classification and backoff delay computations (`handleHubSpotErrors`)
+- Array chunking and boundary handling (`chunk`)
+- Stream transformation and error propagation (`streams`)
 
-## Endpoints
+---
 
-- [Contacts](https://developers.hubspot.com/docs/api/crm/contacts)
-- [Deals](https://developers.hubspot.com/docs/api/crm/deals)
-- [Associations](https://developers.hubspot.com/docs/api/crm/associations)
-- [Pipelines](https://developers.hubspot.com/docs/api/crm/pipelines)
-- [Properties](https://developers.hubspot.com/docs/api/crm/properties), unique `sync_external_id` property (created once, see Setup)
-- [Batch upsert](https://developers.hubspot.com/docs/api-reference/legacy/crm/objects/contacts/batch/upsert-contacts)
-- [Search](https://developers.hubspot.com/docs/api/crm/search), first deal sync only, since replaced (see "Idempotent sync")
+## Production Considerations
 
-## Assumptions
-
-What the code takes as given, so it doesn't have to be inferred:
-
-- **Every deal in the source has a stable `source_id`.** It's the idempotency key, stored in `sync_external_id`; a deal without one is skipped, not created.
-- **Contacts are identified by email**, one per contact and case-insensitive (HubSpot stores it lowercased). A contact without an email is skipped.
-- **The sync is one-way and the source wins.** Each run overwrites the fields it sends, including edits made in HubSpot since the last run. Records removed from the source are left untouched in HubSpot.
-- **Source files are small and curated.** They're loaded whole into memory, and a duplicate or invalid record is treated as a data error that fails its chunk, not something to clean up silently.
-- **The portal is prepared:** the unique `sync_external_id` deal property exists (Setup, step 4), and deals without their own pipeline/stage belong in `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID`.
-- **Contact-to-deal links use HubSpot's default, unlabeled association.** No association labels are needed.
-
-## Decisions
-
-Decisions below were checked against the live portal rather than taken from the docs alone. The first three carry most of the design; the table covers the rest.
-
-### Idempotent sync
-
-Contacts upsert through `batch/upsert` with `idProperty: email`, which HubSpot already enforces as unique. Deals have no equivalent: `dealname` isn't unique, and `batch/upsert` rejects it (`400`, "Unable to perform update/upsert by non-unique 0-3 property dealname").
-
-The first deal sync searched for an existing deal, then created or updated it. That raced HubSpot's Search index, which lags a few seconds behind writes: two back-to-back runs both reported `created: 2`. The fix moves uniqueness into HubSpot: a custom deal property, `sync_external_id`, marked "unique value" and filled with each record's `source_id`, so renaming a deal doesn't break the sync. Deals now upsert by it the same way contacts upsert by email, and two back-to-back runs report `created: 2`, then `updated: 2`. A local `source_id → dealId` map was rejected because it only protects records this process created and remembers, not a concurrent run, a deal created in the UI, or a lost file.
-
-The property is a one-time setup step in the UI (Setup, step 4). Creating it through `POST /crm/v3/properties/deals` needs a schema scope that the sync token doesn't have and doesn't need (`403 MISSING_SCOPES`, confirmed live).
-
-### Batching and partial failures
-
-Both syncs send `batch/upsert` in chunks of 100, HubSpot's hard cap (`400` with 101 inputs). Without `objectWriteTraceId`, one invalid record rejects the whole request and nothing in it is written, so each chunk reports a single outcome: `created`/`updated` counts with each record's `id`, or the error plus the IDs to fix and re-run. Records without `email`/`source_id` are never sent and are listed in `skippedRecords`.
-
-Results are never matched back to input records: `data.results` doesn't come back in input order, and HubSpot lowercases emails. An intermediate version matched by email and reported a mixed-case contact as failed even though HubSpot had saved it.
-
-Per-record results were probed too. With a unique `objectWriteTraceId` per input, upsert answers `207`, writes the valid records and lists the invalid ones in `errors[]`, although the [docs](https://developers.hubspot.com/docs/api-reference/error-handling#multi-status-errors) only describe this for batch create. That is the next step for larger or untrusted input, and cheaper than retrying a failed chunk one record at a time. Duplicate IDs reject the whole request with or without trace IDs (`400`, "Duplicate IDs found in batch input") and are left to fail loudly rather than silently dropped.
-
-### Error handling
-
-- **Invalid payloads:** `validateHubSpotPayload` throws a `ValidationError` before any request is sent. Deal creates and upserts require `dealname`; updates only check the fields they send.
-- **Network errors and timeouts** (10 s per request): retried.
-- **`429`:** retried with exponential backoff (the base delay doubles each attempt) plus random jitter; `Retry-After` takes precedence when HubSpot sends it.
-- **`500`/`502`/`503`/`504`:** retried the same way. All retries stop at `HUBSPOT_MAX_RETRIES`.
-- **Retried writes:** retries apply to every method. That's safe for upserts and the association route, which are idempotent, but a plain create (`create-contact`, `create-deal`) that times out after HubSpot saved it can be created twice. Accepted because creates are one-off example calls; bulk writes go through the idempotent sync.
-- **`401`/`403` and other `4xx`:** not retried, since a bad token or payload fails the same way twice.
-- **Logs:** only the HTTP client logs errors, once per failed attempt (method, URL, status, HubSpot's `category` and message); the sync reports failures in its summary instead of logging them a second time. The `Authorization` header is redacted and request bodies aren't logged. The token only lives in `.env` (gitignored), and startup fails fast without it.
-
-### Other decisions
-
-| Decision | Reason |
-|---|---|
-| `pipeline`/`dealstage`, not the spec's `hs_pipeline`/`hs_stage` | The spec's names don't exist on deals (`404` for both, confirmed live). |
-| Rate limits handled reactively | No client-side throttling: a `429` backs off (see Error handling), and batching keeps call volume low, one request per 100 records. This portal allows 100 requests per 10 s and 250,000 per day (`X-HubSpot-RateLimit-*` response headers, confirmed live). |
-| Pagination through `paging.next.after` | `getHubSpotContacts`/`getHubSpotDeals` take `limit`, `after` and `properties` (which fields come back) and return `nextAfter` so callers page explicitly; the list endpoint has no filters, so filtering would go through the Search API. `getHubSpotContactNames` walks every page at 100 per request (the API maximum) and keeps the names in memory, fine for a test portal; a large one would be processed page by page. |
-| axios, not `@hubspot/api-client` | The SDK hides its own retry and error handling, which is what this test evaluates. |
-| Associations on dated version `2026-09` | HubSpot moved this endpoint off `v3`/`v4`. The `default` association route is idempotent by design, so no client-side existence check. |
-| Pipeline/stage defaults in `hubSpotService` | Callers (examples today, any future controller) send business data only: `createHubSpotDeal(dealName, amount)` takes pipeline and stage from `HUBSPOT_PIPELINE_ID`/`HUBSPOT_STAGE_ID`, and the sync lets a record override them. |
-
-## Production readiness
-
-Before scaling this to a real customer portal, I'd ask three questions: what's the volume, is the sync one-way or two-way, and is the source trusted. Priority follows from those answers, not from a pattern catalog.
-
-- If volume is high: stream the input and process page by page, and budget requests against X-HubSpot-RateLimit-* instead of only reacting to 429.
-
-- If writes must be reliable: route plain creates through upsert with a unique key so a timeout can't duplicate, and persist the sync run report instead of printing it.
-
-- If the sync is two-way: define a policy for source deletions and check hs_lastmodifieddate before overwriting HubSpot edits.
-
-- Always: validate config at startup, and run integration tests against a dedicated test portal in CI.
-
-What I wouldn't do: an async queue, a local ID cache, or webhooks. Batch upsert with a unique property solves idempotency without auxiliary state. Revisit only if volume or two-way sync demands it.
+- **High Volume**: For enterprise-scale datasets, input loading should transition from in-memory arrays to streaming JSON parsers (`stream/promises`), with rate-limit budgeting tied to `X-HubSpot-RateLimit-*` headers.
+- **Two-Way Synchronization**: When bidirectional updates occur, compare `hs_lastmodifieddate` before writes and establish authoritative conflict-resolution policies.
+- **Monitoring & Auditing**: Sync execution summaries should be persisted to an audit datastore rather than standard console logging.

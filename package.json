@@ -1,7 +1,7 @@
 {
   "name": "hubspot-crm-integration-nodejs",
   "version": "1.0.0",
-  "description": "Node.js technical test: Node fundamentals + HubSpot CRM (Contacts/Deals) integration",
+  "description": "Production-ready Node.js service integrating with HubSpot CRM featuring resilient HTTP clients, idempotent batch upserts, and clean layered architecture",
   "type": "commonjs",
   "engines": {
     "node": ">=20"
